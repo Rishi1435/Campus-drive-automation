@@ -31,17 +31,31 @@ async function parseDriveData(text, base64Image) {
     ];
 
     const response = await openai.chat.completions.create({
-      model: 'meta/llama-3.2-90b-vision-instruct',
+      model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
       messages: messages,
-      temperature: 0.2,
-      max_tokens: 1024,
+      temperature: 0.6,
+      top_p: 0.95,
+      max_tokens: 4096,
     });
 
     const outputText = response.choices[0].message.content.trim();
 
     // Parse the expected JSON
     try {
-      const jsonData = JSON.parse(outputText);
+      let cleanText = outputText;
+      if (cleanText.includes('```')) {
+        const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (match) {
+          cleanText = match[1].trim();
+        }
+      }
+      const firstBrace = cleanText.indexOf('{');
+      const lastBrace = cleanText.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+      }
+
+      const jsonData = JSON.parse(cleanText);
       return jsonData;
     } catch (parseError) {
       console.error('Error parsing JSON from LLM response:', parseError);
