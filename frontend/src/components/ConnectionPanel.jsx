@@ -84,6 +84,8 @@ function ConnectionPanel() {
     socket.emit('restart_whatsapp');
   };
 
+  const handleRefreshGroups = () => socket && socket.emit('refresh_groups');
+
   const handleToggleGroup = (groupId) => {
     setSelectedGroups((prev) =>
       prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId]
@@ -176,12 +178,25 @@ function ConnectionPanel() {
             <h4 className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>
               Whitelisted groups to monitor
             </h4>
-            {selectedGroups.length > 0 && <span className="badge">{selectedGroups.length} selected</span>}
+            <div className="flex items-center gap-2">
+              {selectedGroups.length > 0 && <span className="badge">{selectedGroups.length} selected</span>}
+              <button onClick={handleRefreshGroups} className="btn" style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                  <path d="M12 7a5 5 0 1 1-1.46-3.54M12 2v3h-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Refresh
+              </button>
+            </div>
           </div>
+
+          {/* WhatsApp's current web build can block the auto group list — this always works. */}
+          <p className="text-xs mb-3 px-3 py-2 rounded-[8px]" style={{ color: 'var(--text-muted)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
+            Don't see a group? Open it in WhatsApp and <strong style={{ color: 'var(--text)' }}>send any message</strong> — it appears here instantly.
+          </p>
 
           {groups.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-              Fetching your groups…
+              No groups yet — send a message in a group (see above) or tap Refresh.
             </p>
           ) : (
             <div

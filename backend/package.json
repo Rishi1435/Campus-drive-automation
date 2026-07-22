@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node server.js",
+    "reset-wa": "node reset-wa.js",
     "list-groups": "node tools/list-groups.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

@@ -154,7 +154,7 @@ async function loadGroups(client, userId, tries = 3) {
 }
 
 function startClientForUser(userId) {
-  const client = new Client({
+  const clientOptions = {
     authStrategy: new LocalAuth({ clientId: userId }),
     puppeteer: {
       headless: true,
@@ -169,7 +169,20 @@ function startClientForUser(userId) {
         '--no-first-run',
       ],
     },
-  });
+  };
+
+  // Optional: pin a specific WhatsApp Web build if a WhatsApp update breaks
+  // getChats. Set WWEB_VERSION to a filename from
+  // https://github.com/wppconnect-team/wa-version/tree/main/html (without .html),
+  // e.g. WWEB_VERSION=2.3000.1023204808. Left unset, the default (working) build is used.
+  if (process.env.WWEB_VERSION) {
+    clientOptions.webVersionCache = {
+      type: 'remote',
+      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`,
+    };
+  }
+
+  const client = new Client(clientOptions);
 
   client._ready = false;
   client._lastQr = null;
@@ -204,18 +217,27 @@ function startClientForUser(userId) {
     io.to(userId).emit('whatsapp_status', 'disconnected');
   });
 
+  // Add a group to the selectable list (fallback for when getChats is broken).
+  const discover = async (groupId, msg) => {
+    if (!groupId || !groupId.endsWith('@g.us') || client._discovered.has(groupId)) return;
+    let name = groupId;
+    try {
+      const chat = await msg.getChat();
+      if (chat && chat.name) name = chat.name;
+    } catch {}
+    client._discovered.set(groupId, name);
+    io.to(userId).emit('whatsapp_groups', mergedGroups(client));
+  };
+
+  // A message the user SENDS in a group makes that group instantly selectable.
+  client.on('message_create', (msg) => {
+    if (msg.fromMe && msg.to) discover(msg.to, msg);
+  });
+
   client.on('message', async (msg) => {
     try {
       // Learn about any group we hear from, so it's selectable even if getChats broke.
-      if (msg.from.endsWith('@g.us') && !client._discovered.has(msg.from)) {
-        let name = msg.from;
-        try {
-          const chat = await msg.getChat();
-          if (chat && chat.name) name = chat.name;
-        } catch {}
-        client._discovered.set(msg.from, name);
-        io.to(userId).emit('whatsapp_groups', mergedGroups(client));
-      }
+      await discover(msg.from, msg);
 
       const user = await User.findById(userId).lean();
       if (!user || !Array.isArray(user.selectedGroups) || !user.selectedGroups.includes(msg.from)) {
@@ -315,6 +337,12 @@ io.on('connection', (socket) => {
   } else {
     startClientForUser(userId);
   }
+
+  // Manual "Refresh groups" — re-attempt getChats on demand.
+  socket.on('refresh_groups', () => {
+    const c = activeClients.get(userId);
+    if (c && c._ready) loadGroups(c, userId, 2);
+  });
 
   // Let the user force a fresh session / regenerate the QR.
   socket.on('restart_whatsapp', async () => {
