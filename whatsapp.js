@@ -33,6 +33,9 @@ async function buildClient() {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process', // Highly recommended for 512MB RAM free tiers
       ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     },
