@@ -131,26 +131,49 @@ function mergedGroups(client) {
   return [...map.entries()].map(([id, name]) => ({ id, name }));
 }
 
-// getChats can fail transiently (or persistently after a WhatsApp Web update);
-// retry a few times, and always emit whatever we have so the server never dies.
-async function loadGroups(client, userId, tries = 3) {
-  for (let i = 0; i < tries; i++) {
+// Read groups straight from WhatsApp's in-page store, tolerating individual bad
+// chats. getChats() serializes every chat at once, so one broken chat makes the
+// whole call throw ("r"); this per-chat loop survives that.
+async function groupsFromStore(client) {
+  return client.pupPage.evaluate(() => {
+    const out = [];
     try {
-      const chats = await client.getChats();
-      client._groups = chats
-        .filter((c) => c.isGroup)
-        .map((g) => ({ id: g.id._serialized, name: g.name }));
-      io.to(userId).emit('whatsapp_groups', mergedGroups(client));
-      return;
-    } catch (e) {
-      if (i === tries - 1) {
-        console.error('getChats failed (will fall back to message-discovered groups):', e.message);
-        io.to(userId).emit('whatsapp_groups', mergedGroups(client));
-      } else {
-        await new Promise((r) => setTimeout(r, 3000));
+      const store = window.Store;
+      const arr = store && store.Chat && store.Chat.getModelsArray ? store.Chat.getModelsArray() : [];
+      for (const c of arr) {
+        try {
+          const isGroup = c.isGroup !== undefined ? c.isGroup : c.id && c.id.server === 'g.us';
+          if (isGroup) {
+            out.push({ id: c.id._serialized, name: c.formattedTitle || c.name || (c.id && c.id.user) || 'Group' });
+          }
+        } catch (e) { /* skip this chat */ }
       }
-    }
+    } catch (e) { /* Store not ready */ }
+    return out;
+  });
+}
+
+// Best-effort group loading: try the normal API, then the resilient store read,
+// then whatever we've discovered from messages. Never throws.
+async function loadGroups(client, userId) {
+  try {
+    const chats = await client.getChats();
+    client._groups = chats.filter((c) => c.isGroup).map((g) => ({ id: g.id._serialized, name: g.name }));
+    io.to(userId).emit('whatsapp_groups', mergedGroups(client));
+    return;
+  } catch (e) {
+    // getChats broken by a WhatsApp update — fall through to the store reader.
   }
+  try {
+    const groups = await groupsFromStore(client);
+    if (groups && groups.length) {
+      client._groups = groups;
+      console.log(`Loaded ${groups.length} groups via store fallback.`);
+    }
+  } catch (e) {
+    console.error('Group store fallback failed:', e.message);
+  }
+  io.to(userId).emit('whatsapp_groups', mergedGroups(client));
 }
 
 function startClientForUser(userId) {
@@ -325,7 +348,6 @@ io.on('connection', (socket) => {
   if (existing && existing._ready) {
     socket.emit('whatsapp_status', 'connected');
     socket.emit('whatsapp_groups', mergedGroups(existing));
-    if (!existing._groups || existing._groups.length === 0) loadGroups(existing, userId, 1);
   } else if (existing && existing._failed) {
     // Don't auto-relaunch a failed client (avoids the launch spam) — wait for retry.
     socket.emit('whatsapp_status', 'error');
@@ -341,7 +363,7 @@ io.on('connection', (socket) => {
   // Manual "Refresh groups" — re-attempt getChats on demand.
   socket.on('refresh_groups', () => {
     const c = activeClients.get(userId);
-    if (c && c._ready) loadGroups(c, userId, 2);
+    if (c && c._ready) loadGroups(c, userId);
   });
 
   // Let the user force a fresh session / regenerate the QR.
