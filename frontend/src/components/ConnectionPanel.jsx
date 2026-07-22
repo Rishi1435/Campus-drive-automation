@@ -5,43 +5,84 @@ import { useAuth } from '../AuthContext';
 import { apiFetch } from '../api';
 
 const STATUS_META = {
-  connected: { cls: 'status--connected', label: 'Connected' },
+  connecting: { cls: 'status--pending', label: 'Connecting…' },
+  initializing: { cls: 'status--pending', label: 'Starting WhatsApp…' },
   scan_qr: { cls: 'status--pending', label: 'Scan QR' },
+  connected: { cls: 'status--connected', label: 'Connected' },
   disconnected: { cls: '', label: 'Disconnected' },
+  error: { cls: '', label: 'Error' },
 };
 
 function ConnectionPanel() {
   const socket = useSocket();
   const { token } = useAuth();
-  const [status, setStatus] = useState('disconnected');
+  const [status, setStatus] = useState('connecting');
   const [qrCode, setQrCode] = useState(null);
+  const [error, setError] = useState(null);
   const [groups, setGroups] = useState([]);
   const [selectedGroups, setSelectedGroups] = useState([]);
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
 
+  // Preload the whitelist this user saved earlier.
+  useEffect(() => {
+    if (!token) return;
+    apiFetch('/api/me', { token })
+      .then((me) => setSelectedGroups(me.selectedGroups || []))
+      .catch(() => {});
+  }, [token]);
+
   useEffect(() => {
     if (!socket) return;
 
+    setStatus(socket.connected ? 'initializing' : 'connecting');
+
+    const onConnect = () => setStatus((s) => (s === 'connecting' ? 'initializing' : s));
+    const onDisconnect = () => setStatus('connecting');
+    const onConnectError = () => setStatus('connecting');
     const handleQR = (qr) => {
       setQrCode(qr);
+      setError(null);
       setStatus('scan_qr');
     };
     const handleStatus = (newStatus) => {
       setStatus(newStatus);
-      if (newStatus === 'connected') setQrCode(null);
+      if (newStatus === 'connected') {
+        setQrCode(null);
+        setError(null);
+      }
     };
     const handleGroups = (fetchedGroups) => setGroups(fetchedGroups);
+    const handleError = (msg) => {
+      setError(msg || 'Something went wrong.');
+      setStatus('error');
+    };
 
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
     socket.on('whatsapp_qr', handleQR);
     socket.on('whatsapp_status', handleStatus);
     socket.on('whatsapp_groups', handleGroups);
+    socket.on('whatsapp_error', handleError);
 
     return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
       socket.off('whatsapp_qr', handleQR);
       socket.off('whatsapp_status', handleStatus);
       socket.off('whatsapp_groups', handleGroups);
+      socket.off('whatsapp_error', handleError);
     };
   }, [socket]);
+
+  const handleRetry = () => {
+    if (!socket) return;
+    setError(null);
+    setQrCode(null);
+    setStatus('initializing');
+    socket.emit('restart_whatsapp');
+  };
 
   const handleToggleGroup = (groupId) => {
     setSelectedGroups((prev) =>
@@ -62,6 +103,7 @@ function ConnectionPanel() {
   };
 
   const meta = STATUS_META[status] || STATUS_META.disconnected;
+  const canRetry = socket && ['initializing', 'scan_qr', 'disconnected', 'error'].includes(status);
 
   return (
     <section className="glass p-6">
@@ -72,8 +114,8 @@ function ConnectionPanel() {
             Link your account to start capturing drives.
           </p>
         </div>
-        <span className={`status ${meta.cls}`}>
-          <span className="dot" />
+        <span className={`status ${meta.cls}`} style={status === 'error' ? { color: 'var(--danger)' } : undefined}>
+          <span className="dot" style={status === 'error' ? { background: 'var(--danger)' } : undefined} />
           {meta.label}
         </span>
       </div>
@@ -90,15 +132,41 @@ function ConnectionPanel() {
         </div>
       )}
 
-      {/* Disconnected hint */}
-      {status !== 'connected' && status !== 'scan_qr' && (
+      {/* Connecting / initializing */}
+      {(status === 'connecting' || status === 'initializing') && (
         <div
           className="mt-6 flex items-center gap-3 text-sm px-4 py-3 rounded-[10px]"
           style={{ color: 'var(--text-muted)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}
         >
           <span className="spinner" style={{ borderTopColor: 'var(--accent)' }} />
-          Waiting for the connection… a QR code will appear here.
+          {status === 'connecting'
+            ? 'Connecting to the server…'
+            : 'Starting WhatsApp — the QR can take up to a minute the first time.'}
         </div>
+      )}
+
+      {/* Error / disconnected */}
+      {(status === 'error' || status === 'disconnected') && (
+        <div
+          className="mt-6 text-sm px-4 py-3 rounded-[10px]"
+          style={{
+            color: status === 'error' ? 'var(--danger)' : 'var(--text-muted)',
+            background: status === 'error' ? 'rgba(251,113,133,0.1)' : 'var(--surface-2)',
+            border: `1px solid ${status === 'error' ? 'rgba(251,113,133,0.28)' : 'var(--border)'}`,
+          }}
+        >
+          {status === 'error' ? error : 'WhatsApp is not linked yet.'}
+        </div>
+      )}
+
+      {/* Retry — available whenever it's not fully connected */}
+      {canRetry && (
+        <button onClick={handleRetry} className="btn mt-4">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M12 7a5 5 0 1 1-1.46-3.54M12 2v3h-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {status === 'scan_qr' ? 'Regenerate QR' : 'Retry connection'}
+        </button>
       )}
 
       {/* Group selection */}
@@ -106,11 +174,9 @@ function ConnectionPanel() {
         <div className="mt-6">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>
-              Groups to monitor
+              Whitelisted groups to monitor
             </h4>
-            {selectedGroups.length > 0 && (
-              <span className="badge">{selectedGroups.length} selected</span>
-            )}
+            {selectedGroups.length > 0 && <span className="badge">{selectedGroups.length} selected</span>}
           </div>
 
           {groups.length === 0 ? (
@@ -142,19 +208,11 @@ function ConnectionPanel() {
           )}
 
           <div className="flex items-center gap-3 mt-4">
-            <button
-              onClick={handleSavePreferences}
-              className="btn btn--primary"
-              disabled={saveState === 'saving'}
-            >
+            <button onClick={handleSavePreferences} className="btn btn--primary" disabled={saveState === 'saving'}>
               {saveState === 'saving' ? <span className="spinner" /> : 'Save preferences'}
             </button>
-            {saveState === 'saved' && (
-              <span className="text-sm animate-in" style={{ color: 'var(--success)' }}>✓ Saved</span>
-            )}
-            {saveState === 'error' && (
-              <span className="text-sm animate-in" style={{ color: 'var(--danger)' }}>Couldn't save — try again</span>
-            )}
+            {saveState === 'saved' && <span className="text-sm animate-in" style={{ color: 'var(--success)' }}>✓ Saved</span>}
+            {saveState === 'error' && <span className="text-sm animate-in" style={{ color: 'var(--danger)' }}>Couldn't save — try again</span>}
           </div>
         </div>
       )}

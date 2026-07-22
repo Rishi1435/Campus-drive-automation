@@ -95,6 +95,12 @@ app.get('/api/drives', requireAuth, async (req, res) => {
   );
 });
 
+app.get('/api/me', requireAuth, async (req, res) => {
+  const user = await User.findById(req.userId).lean();
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  res.json({ email: user.email, selectedGroups: user.selectedGroups || [] });
+});
+
 app.post('/api/groups', requireAuth, async (req, res) => {
   const { selectedGroups } = req.body;
   if (!Array.isArray(selectedGroups)) {
@@ -117,23 +123,36 @@ function startClientForUser(userId) {
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      // NOTE: do NOT add --single-process / --no-zygote here — they stop
+      // whatsapp-web.js from ever emitting the QR on many systems.
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-first-run',
-        '--no-zygote',
-        '--single-process',
       ],
     },
   });
 
+  client._ready = false;
+  client._lastQr = null;
   activeClients.set(userId, client);
+  io.to(userId).emit('whatsapp_status', 'initializing');
 
-  client.on('qr', (qr) => io.to(userId).emit('whatsapp_qr', qr));
+  client.on('qr', (qr) => {
+    client._lastQr = qr;
+    io.to(userId).emit('whatsapp_qr', qr);
+  });
+  client.on('loading_screen', () => io.to(userId).emit('whatsapp_status', 'initializing'));
+  client.on('authenticated', () => io.to(userId).emit('whatsapp_status', 'initializing'));
+  client.on('auth_failure', () =>
+    io.to(userId).emit('whatsapp_error', 'WhatsApp authentication failed — please retry.')
+  );
 
   client.on('ready', async () => {
+    client._ready = true;
+    client._lastQr = null;
     io.to(userId).emit('whatsapp_status', 'connected');
     try {
       const chats = await client.getChats();
@@ -147,6 +166,7 @@ function startClientForUser(userId) {
   });
 
   client.on('disconnected', () => {
+    client._ready = false;
     activeClients.delete(userId);
     io.to(userId).emit('whatsapp_status', 'disconnected');
   });
@@ -209,6 +229,7 @@ function startClientForUser(userId) {
   client.initialize().catch((e) => {
     console.error(`Failed to init WhatsApp client for ${userId}:`, e.message);
     activeClients.delete(userId);
+    io.to(userId).emit('whatsapp_error', 'Could not start WhatsApp — tap retry.');
   });
 }
 
@@ -228,10 +249,10 @@ io.on('connection', (socket) => {
   const userId = socket.userId;
   socket.join(userId);
 
-  if (activeClients.has(userId)) {
+  const existing = activeClients.get(userId);
+  if (existing && existing._ready) {
     socket.emit('whatsapp_status', 'connected');
-    const client = activeClients.get(userId);
-    client
+    existing
       .getChats()
       .then((chats) =>
         socket.emit(
@@ -240,9 +261,23 @@ io.on('connection', (socket) => {
         )
       )
       .catch(() => {});
+  } else if (existing) {
+    // Client is still starting — resend the last QR if we already have one.
+    socket.emit('whatsapp_status', 'initializing');
+    if (existing._lastQr) socket.emit('whatsapp_qr', existing._lastQr);
   } else {
     startClientForUser(userId);
   }
+
+  // Let the user force a fresh session / regenerate the QR.
+  socket.on('restart_whatsapp', async () => {
+    const c = activeClients.get(userId);
+    if (c) {
+      try { await c.destroy(); } catch {}
+      activeClients.delete(userId);
+    }
+    startClientForUser(userId);
+  });
 
   socket.on('disconnect', () => {});
 });
