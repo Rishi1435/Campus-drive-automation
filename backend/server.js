@@ -5,9 +5,10 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const cors = require('cors');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, RemoteAuth } = require('whatsapp-web.js');
+const { MongoStore } = require('wwebjs-mongo');
 const { parseDriveData } = require('./parser');
-const { connectMongo, User, Drive } = require('./mongo');
+const { mongoose, connectMongo, User, Drive } = require('./mongo');
 require('dotenv').config();
 
 // Keep the server alive through library-level failures (e.g. whatsapp-web.js's
@@ -103,7 +104,18 @@ app.get('/api/drives', requireAuth, async (req, res) => {
 app.get('/api/me', requireAuth, async (req, res) => {
   const user = await User.findById(req.userId).lean();
   if (!user) return res.status(404).json({ error: 'Not found' });
-  res.json({ email: user.email, selectedGroups: user.selectedGroups || [] });
+  res.json({
+    email: user.email,
+    selectedGroups: user.selectedGroups || [],
+    hasApiKey: !!user.nvidiaApiKey,
+  });
+});
+
+// Save (or clear) the user's own NVIDIA API key.
+app.post('/api/apikey', requireAuth, async (req, res) => {
+  const key = typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  await User.findByIdAndUpdate(req.userId, { nvidiaApiKey: key });
+  res.json({ success: true, hasApiKey: !!key });
 });
 
 app.post('/api/groups', requireAuth, async (req, res) => {
@@ -201,7 +213,14 @@ async function loadGroups(client, userId) {
 
 function startClientForUser(userId) {
   const clientOptions = {
-    authStrategy: new LocalAuth({ clientId: userId }),
+    // RemoteAuth stores the session in MongoDB, so the WhatsApp login SURVIVES
+    // restarts/redeploys (Render's disk is ephemeral) and stays linked until the
+    // user explicitly disconnects it.
+    authStrategy: new RemoteAuth({
+      clientId: userId,
+      store: new MongoStore({ mongoose }),
+      backupSyncIntervalMs: 300000,
+    }),
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -312,7 +331,7 @@ function startClientForUser(userId) {
         }
       }
 
-      const parsed = await parseDriveData(msg.body, base64Image);
+      const parsed = await parseDriveData(msg.body, base64Image, user.nvidiaApiKey);
       if (!parsed || (!parsed.company && !parsed.role)) return;
 
       const dedupKey = dedupKeyFor(parsed);
@@ -399,6 +418,17 @@ io.on('connection', (socket) => {
     if (c && c._ready) loadGroups(c, userId);
   });
 
+  // Explicitly unlink WhatsApp (removes the stored session so it won't auto-reconnect).
+  socket.on('logout_whatsapp', async () => {
+    const c = activeClients.get(userId);
+    if (c) {
+      try { await c.logout(); } catch {}
+      try { await c.destroy(); } catch {}
+      activeClients.delete(userId);
+    }
+    io.to(userId).emit('whatsapp_status', 'disconnected');
+  });
+
   // Let the user force a fresh session / regenerate the QR.
   socket.on('restart_whatsapp', async () => {
     const c = activeClients.get(userId);
@@ -413,10 +443,23 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {});
 });
 
+// --- Keep-alive (stops Render's free instance from sleeping) -----------------
+// Render sets RENDER_EXTERNAL_URL to the service's public URL. Pinging our own
+// /api/health every ~10 min counts as inbound traffic and prevents idle sleep.
+function startKeepAlive() {
+  const url = process.env.RENDER_EXTERNAL_URL;
+  if (!url) return;
+  setInterval(() => {
+    fetch(`${url}/api/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+  console.log('Keep-alive ping enabled for', url);
+}
+
 // --- Boot -------------------------------------------------------------------
 connectMongo(process.env.MONGODB_URI)
   .then(() => {
     server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+    startKeepAlive();
   })
   .catch((e) => {
     console.error('Failed to connect to MongoDB:', e.message);

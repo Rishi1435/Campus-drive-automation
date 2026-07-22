@@ -7,6 +7,8 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true },
     // WhatsApp group IDs this user wants monitored.
     selectedGroups: { type: [String], default: [] },
+    // Each user can supply their own NVIDIA API key (avoids sharing rate limits).
+    nvidiaApiKey: { type: String, default: '' },
   },
   { timestamps: true }
 );

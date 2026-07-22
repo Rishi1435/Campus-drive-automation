@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import ConnectionPanel from './ConnectionPanel';
+import ApiKeyPanel from './ApiKeyPanel';
 import DataTable from './DataTable';
 
 function Dashboard() {
@@ -66,6 +67,7 @@ function Dashboard() {
 
         <div className="stagger flex flex-col gap-6">
           <ConnectionPanel />
+          <ApiKeyPanel />
           <DataTable />
         </div>
       </main>

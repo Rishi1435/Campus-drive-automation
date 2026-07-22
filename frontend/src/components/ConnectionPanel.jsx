@@ -22,6 +22,7 @@ function ConnectionPanel() {
   const [groups, setGroups] = useState([]);
   const [selectedGroups, setSelectedGroups] = useState([]);
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
+  const [groupSearch, setGroupSearch] = useState('');
 
   // Preload the whitelist this user saved earlier.
   useEffect(() => {
@@ -85,6 +86,11 @@ function ConnectionPanel() {
   };
 
   const handleRefreshGroups = () => socket && socket.emit('refresh_groups');
+  const handleDisconnect = () => {
+    if (!socket) return;
+    setGroups([]);
+    socket.emit('logout_whatsapp');
+  };
 
   const handleToggleGroup = (groupId) => {
     setSelectedGroups((prev) =>
@@ -174,7 +180,7 @@ function ConnectionPanel() {
       {/* Group selection */}
       {status === 'connected' && (
         <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
             <h4 className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>
               Whitelisted groups to monitor
             </h4>
@@ -186,6 +192,9 @@ function ConnectionPanel() {
                 </svg>
                 Refresh
               </button>
+              <button onClick={handleDisconnect} className="btn btn--danger" style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
+                Disconnect
+              </button>
             </div>
           </div>
 
@@ -193,6 +202,16 @@ function ConnectionPanel() {
           <p className="text-xs mb-3 px-3 py-2 rounded-[8px]" style={{ color: 'var(--text-muted)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
             Don't see a group? Open it in WhatsApp and <strong style={{ color: 'var(--text)' }}>send any message</strong> — it appears here instantly.
           </p>
+
+          {groups.length > 6 && (
+            <input
+              type="text"
+              className="input mb-2"
+              placeholder="Search groups…"
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+            />
+          )}
 
           {groups.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
@@ -203,22 +222,24 @@ function ConnectionPanel() {
               className="max-h-64 overflow-y-auto p-1.5 rounded-[12px]"
               style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}
             >
-              {groups.map((group) => (
-                <label key={group.id} htmlFor={group.id} className="check-row">
-                  <input
-                    type="checkbox"
-                    id={group.id}
-                    checked={selectedGroups.includes(group.id)}
-                    onChange={() => handleToggleGroup(group.id)}
-                  />
-                  <span className="check-box" aria-hidden="true">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6.5L5 9L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </span>
-                  <span className="text-sm truncate">{group.name}</span>
-                </label>
-              ))}
+              {groups
+                .filter((g) => (g.name || '').toLowerCase().includes(groupSearch.toLowerCase()))
+                .map((group) => (
+                  <label key={group.id} htmlFor={group.id} className="check-row">
+                    <input
+                      type="checkbox"
+                      id={group.id}
+                      checked={selectedGroups.includes(group.id)}
+                      onChange={() => handleToggleGroup(group.id)}
+                    />
+                    <span className="check-box" aria-hidden="true">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6.5L5 9L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                    <span className="text-sm truncate">{group.name}</span>
+                  </label>
+                ))}
             </div>
           )}
 

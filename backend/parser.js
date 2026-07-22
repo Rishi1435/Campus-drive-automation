@@ -1,14 +1,19 @@
 const { OpenAI } = require('openai');
 require('dotenv').config();
 
-// Configure the OpenAI SDK to point to NVIDIA NIM
-const openai = new OpenAI({
-  baseURL: 'https://integrate.api.nvidia.com/v1',
-  apiKey: process.env.NVIDIA_API_KEY || 'dummy_key',
-});
+// Reuse one client per API key (the user's own key, or the shared env fallback).
+const clients = new Map();
+function clientFor(apiKey) {
+  const key = apiKey || process.env.NVIDIA_API_KEY || 'dummy_key';
+  if (!clients.has(key)) {
+    clients.set(key, new OpenAI({ baseURL: 'https://integrate.api.nvidia.com/v1', apiKey: key }));
+  }
+  return clients.get(key);
+}
 
-async function parseDriveData(text, base64Image) {
+async function parseDriveData(text, base64Image, apiKey) {
   try {
+    const openai = clientFor(apiKey);
     const systemMessage = {
       role: 'system',
       content: 'You are an assistant that extracts structured data from campus placement drives and hiring messages. Extract the details and output strictly a JSON object with the following keys: company, role, ctc, eligibility, deadline, and applyLink. If a detail is missing, set its value to null. Output only the JSON object without any markdown formatting, backticks, or additional text.'
