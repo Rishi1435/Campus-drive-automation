@@ -4,7 +4,7 @@ require('dotenv').config();
 // Configure the OpenAI SDK to point to NVIDIA NIM
 const openai = new OpenAI({
   baseURL: 'https://integrate.api.nvidia.com/v1',
-  apiKey: process.env.NVIDIA_API_KEY,
+  apiKey: process.env.NVIDIA_API_KEY || 'dummy_key',
 });
 
 async function parseDriveData(text, base64Image) {
@@ -31,7 +31,7 @@ async function parseDriveData(text, base64Image) {
     ];
 
     const response = await openai.chat.completions.create({
-      model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+      model: 'meta/llama-3.2-90b-vision-instruct',
       messages: messages,
       temperature: 0.6,
       top_p: 0.95,
