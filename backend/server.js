@@ -10,6 +10,11 @@ const { parseDriveData } = require('./parser');
 const { connectMongo, User, Drive } = require('./mongo');
 require('dotenv').config();
 
+// Keep the server alive through library-level failures (e.g. whatsapp-web.js's
+// LocalAuth throwing EBUSY while Chromium still holds Windows file locks).
+process.on('unhandledRejection', (r) => console.error('Unhandled rejection:', (r && r.message) || r));
+process.on('uncaughtException', (e) => console.error('Uncaught exception:', (e && e.message) || e));
+
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const PORT = process.env.PORT || 3000;
 
@@ -117,6 +122,37 @@ app.get('/api/health', (req, res) => {
 // --- WhatsApp: one client per authenticated user ----------------------------
 const activeClients = new Map(); // userId -> Client
 
+// Groups the UI can whitelist = those from getChats() PLUS any group we've seen
+// a message from (a fallback for when getChats is broken by a WhatsApp update).
+function mergedGroups(client) {
+  const map = new Map();
+  for (const g of client._groups || []) map.set(g.id, g.name);
+  if (client._discovered) for (const [id, name] of client._discovered) if (!map.has(id)) map.set(id, name);
+  return [...map.entries()].map(([id, name]) => ({ id, name }));
+}
+
+// getChats can fail transiently (or persistently after a WhatsApp Web update);
+// retry a few times, and always emit whatever we have so the server never dies.
+async function loadGroups(client, userId, tries = 3) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const chats = await client.getChats();
+      client._groups = chats
+        .filter((c) => c.isGroup)
+        .map((g) => ({ id: g.id._serialized, name: g.name }));
+      io.to(userId).emit('whatsapp_groups', mergedGroups(client));
+      return;
+    } catch (e) {
+      if (i === tries - 1) {
+        console.error('getChats failed (will fall back to message-discovered groups):', e.message);
+        io.to(userId).emit('whatsapp_groups', mergedGroups(client));
+      } else {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+  }
+}
+
 function startClientForUser(userId) {
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: userId }),
@@ -137,6 +173,8 @@ function startClientForUser(userId) {
 
   client._ready = false;
   client._lastQr = null;
+  client._groups = [];
+  client._discovered = new Map(); // groupId -> name, learned from incoming messages
   activeClients.set(userId, client);
   io.to(userId).emit('whatsapp_status', 'initializing');
 
@@ -150,19 +188,11 @@ function startClientForUser(userId) {
     io.to(userId).emit('whatsapp_error', 'WhatsApp authentication failed — please retry.')
   );
 
-  client.on('ready', async () => {
+  client.on('ready', () => {
     client._ready = true;
     client._lastQr = null;
     io.to(userId).emit('whatsapp_status', 'connected');
-    try {
-      const chats = await client.getChats();
-      const groups = chats
-        .filter((c) => c.isGroup)
-        .map((g) => ({ id: g.id._serialized, name: g.name }));
-      io.to(userId).emit('whatsapp_groups', groups);
-    } catch (err) {
-      console.error('Error fetching chats:', err);
-    }
+    loadGroups(client, userId);
   });
 
   client.on('disconnected', () => {
@@ -173,6 +203,17 @@ function startClientForUser(userId) {
 
   client.on('message', async (msg) => {
     try {
+      // Learn about any group we hear from, so it's selectable even if getChats broke.
+      if (msg.from.endsWith('@g.us') && !client._discovered.has(msg.from)) {
+        let name = msg.from;
+        try {
+          const chat = await msg.getChat();
+          if (chat && chat.name) name = chat.name;
+        } catch {}
+        client._discovered.set(msg.from, name);
+        io.to(userId).emit('whatsapp_groups', mergedGroups(client));
+      }
+
       const user = await User.findById(userId).lean();
       if (!user || !Array.isArray(user.selectedGroups) || !user.selectedGroups.includes(msg.from)) {
         return;
@@ -252,15 +293,8 @@ io.on('connection', (socket) => {
   const existing = activeClients.get(userId);
   if (existing && existing._ready) {
     socket.emit('whatsapp_status', 'connected');
-    existing
-      .getChats()
-      .then((chats) =>
-        socket.emit(
-          'whatsapp_groups',
-          chats.filter((c) => c.isGroup).map((g) => ({ id: g.id._serialized, name: g.name }))
-        )
-      )
-      .catch(() => {});
+    socket.emit('whatsapp_groups', mergedGroups(existing));
+    if (!existing._groups || existing._groups.length === 0) loadGroups(existing, userId, 1);
   } else if (existing) {
     // Client is still starting — resend the last QR if we already have one.
     socket.emit('whatsapp_status', 'initializing');
