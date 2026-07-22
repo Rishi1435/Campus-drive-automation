@@ -1,32 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth } from '../firebase';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../AuthContext';
 import ConnectionPanel from './ConnectionPanel';
 import DataTable from './DataTable';
 
 function Dashboard() {
-  const [user, setUser] = useState(null);
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-      } else {
-        navigate('/login');
-      }
-    });
-    return () => unsubscribe();
-  }, [navigate]);
+    if (!user) navigate('/login');
+  }, [user, navigate]);
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      navigate('/login');
-    } catch (err) {
-      console.error('Logout error', err);
-    }
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
   };
 
   if (!user) {
@@ -77,8 +65,8 @@ function Dashboard() {
         </div>
 
         <div className="stagger flex flex-col gap-6">
-          <ConnectionPanel uid={user.uid} />
-          <DataTable uid={user.uid} />
+          <ConnectionPanel />
+          <DataTable />
         </div>
       </main>
     </div>

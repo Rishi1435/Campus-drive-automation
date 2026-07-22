@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../firebase';
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../AuthContext';
 
 function Login() {
+  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -15,10 +15,10 @@ function Login() {
     setError(null);
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await login(email, password);
       navigate('/');
     } catch (err) {
-      setError(err.message.replace('Firebase:', '').trim());
+      setError(err.message);
       setLoading(false);
     }
   };

@@ -1,25 +1,25 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { useSocket } from '../SocketContext';
+import { useAuth } from '../AuthContext';
+import { apiFetch } from '../api';
 
-function DataTable({ uid }) {
+function DataTable() {
   const socket = useSocket();
+  const { token } = useAuth();
   const [drives, setDrives] = useState([]);
   const newIds = useRef(new Set()); // ids that arrived live → get the highlight animation
 
   useEffect(() => {
-    if (!uid) return;
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
-
+    if (!token) return;
     (async () => {
       try {
-        const res = await fetch(`${backendUrl}/api/drives/${uid}`);
-        if (res.ok) setDrives(await res.json());
+        setDrives(await apiFetch('/api/drives', { token }));
       } catch (err) {
         console.error('Error fetching drives:', err);
       }
     })();
-  }, [uid]);
+  }, [token]);
 
   useEffect(() => {
     if (!socket) return;

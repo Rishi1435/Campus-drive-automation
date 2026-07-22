@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useSocket } from '../SocketContext';
+import { useAuth } from '../AuthContext';
+import { apiFetch } from '../api';
 
 const STATUS_META = {
   connected: { cls: 'status--connected', label: 'Connected' },
@@ -8,8 +10,9 @@ const STATUS_META = {
   disconnected: { cls: '', label: 'Disconnected' },
 };
 
-function ConnectionPanel({ uid }) {
+function ConnectionPanel() {
   const socket = useSocket();
+  const { token } = useAuth();
   const [status, setStatus] = useState('disconnected');
   const [qrCode, setQrCode] = useState(null);
   const [groups, setGroups] = useState([]);
@@ -17,7 +20,7 @@ function ConnectionPanel({ uid }) {
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
 
   useEffect(() => {
-    if (!socket || !uid) return;
+    if (!socket) return;
 
     const handleQR = (qr) => {
       setQrCode(qr);
@@ -38,7 +41,7 @@ function ConnectionPanel({ uid }) {
       socket.off('whatsapp_status', handleStatus);
       socket.off('whatsapp_groups', handleGroups);
     };
-  }, [socket, uid]);
+  }, [socket]);
 
   const handleToggleGroup = (groupId) => {
     setSelectedGroups((prev) =>
@@ -47,15 +50,10 @@ function ConnectionPanel({ uid }) {
   };
 
   const handleSavePreferences = async () => {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
     setSaveState('saving');
     try {
-      const response = await fetch(`${backendUrl}/api/groups/${uid}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedGroups }),
-      });
-      setSaveState(response.ok ? 'saved' : 'error');
+      await apiFetch('/api/groups', { token, method: 'POST', body: { selectedGroups } });
+      setSaveState('saved');
     } catch (err) {
       console.error('Error saving preferences', err);
       setSaveState('error');
