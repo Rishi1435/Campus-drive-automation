@@ -175,6 +175,8 @@ function startClientForUser(userId) {
   client._lastQr = null;
   client._groups = [];
   client._discovered = new Map(); // groupId -> name, learned from incoming messages
+  client._initializing = true;
+  client._failed = false;
   activeClients.set(userId, client);
   io.to(userId).emit('whatsapp_status', 'initializing');
 
@@ -190,6 +192,7 @@ function startClientForUser(userId) {
 
   client.on('ready', () => {
     client._ready = true;
+    client._initializing = false;
     client._lastQr = null;
     io.to(userId).emit('whatsapp_status', 'connected');
     loadGroups(client, userId);
@@ -267,10 +270,16 @@ function startClientForUser(userId) {
     }
   });
 
-  client.initialize().catch((e) => {
+  client.initialize().catch(async (e) => {
     console.error(`Failed to init WhatsApp client for ${userId}:`, e.message);
-    activeClients.delete(userId);
-    io.to(userId).emit('whatsapp_error', 'Could not start WhatsApp — tap retry.');
+    client._initializing = false;
+    client._failed = true;
+    client._error =
+      'Could not start WhatsApp. Tap retry — if it keeps failing, stop the server and delete the backend/.wwebjs_auth session folder, then re-scan.';
+    // Release Chromium so a retry isn't blocked by "browser already running".
+    try { await client.destroy(); } catch {}
+    io.to(userId).emit('whatsapp_status', 'error');
+    io.to(userId).emit('whatsapp_error', client._error);
   });
 }
 
@@ -295,6 +304,10 @@ io.on('connection', (socket) => {
     socket.emit('whatsapp_status', 'connected');
     socket.emit('whatsapp_groups', mergedGroups(existing));
     if (!existing._groups || existing._groups.length === 0) loadGroups(existing, userId, 1);
+  } else if (existing && existing._failed) {
+    // Don't auto-relaunch a failed client (avoids the launch spam) — wait for retry.
+    socket.emit('whatsapp_status', 'error');
+    socket.emit('whatsapp_error', existing._error || 'WhatsApp failed to start — tap retry.');
   } else if (existing) {
     // Client is still starting — resend the last QR if we already have one.
     socket.emit('whatsapp_status', 'initializing');
@@ -306,6 +319,7 @@ io.on('connection', (socket) => {
   // Let the user force a fresh session / regenerate the QR.
   socket.on('restart_whatsapp', async () => {
     const c = activeClients.get(userId);
+    if (c && c._initializing) return; // an init is already in flight — don't stampede
     if (c) {
       try { await c.destroy(); } catch {}
       activeClients.delete(userId);
