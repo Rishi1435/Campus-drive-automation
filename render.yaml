@@ -2,9 +2,10 @@
 # In Render: New -> Blueprint -> connect this repo. Render reads this file and
 # creates BOTH services; you then fill the values marked sync:false.
 #
-# NOTE (free tier): the backend runs headless Chromium and stores data in SQLite
-# on an EPHEMERAL disk — on restart/sleep the WhatsApp session + drives reset.
-# Fine for a demo; for persistence you'd add a paid disk or an external DB.
+# NOTE (free tier): drives/users live in MongoDB (persistent), but the WhatsApp
+# session is on the instance's EPHEMERAL disk and free services SLEEP after ~15
+# min idle — so the WhatsApp link drops and needs a re-scan after a sleep/restart.
+# Fine to try; for always-on capture use a paid instance or your own machine.
 services:
   # ---- Backend: WhatsApp worker + API + Socket.io -------------------------
   - type: web
