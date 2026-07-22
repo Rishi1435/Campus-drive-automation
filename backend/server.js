@@ -138,19 +138,42 @@ async function groupsFromStore(client) {
   return client.pupPage.evaluate(() => {
     const out = [];
     try {
-      const store = window.Store;
-      const arr = store && store.Chat && store.Chat.getModelsArray ? store.Chat.getModelsArray() : [];
+      const S = window.Store;
+      let arr = [];
+      if (S && S.Chat) {
+        if (typeof S.Chat.getModelsArray === 'function') arr = S.Chat.getModelsArray();
+        else if (Array.isArray(S.Chat._models)) arr = S.Chat._models;
+        else if (Array.isArray(S.Chat.models)) arr = S.Chat.models;
+      }
       for (const c of arr) {
         try {
           const isGroup = c.isGroup !== undefined ? c.isGroup : c.id && c.id.server === 'g.us';
-          if (isGroup) {
-            out.push({ id: c.id._serialized, name: c.formattedTitle || c.name || (c.id && c.id.user) || 'Group' });
+          const id = c.id && c.id._serialized;
+          if (isGroup && id) {
+            out.push({ id, name: c.formattedTitle || c.name || c.subject || (c.id && c.id.user) || 'Group' });
           }
         } catch (e) { /* skip this chat */ }
       }
     } catch (e) { /* Store not ready */ }
     return out;
   });
+}
+
+// Resolve a single group's display name from the in-page store (works even when
+// getChat() is broken by a WhatsApp update).
+async function groupNameFromStore(client, groupId) {
+  try {
+    return await client.pupPage.evaluate((id) => {
+      try {
+        const c = window.Store && window.Store.Chat && window.Store.Chat.get ? window.Store.Chat.get(id) : null;
+        return c ? c.formattedTitle || c.name || c.subject || null : null;
+      } catch (e) {
+        return null;
+      }
+    }, groupId);
+  } catch (e) {
+    return null;
+  }
 }
 
 // Best-effort group loading: try the normal API, then the resilient store read,
@@ -241,18 +264,25 @@ function startClientForUser(userId) {
   });
 
   // Add a group to the selectable list (fallback for when getChats is broken).
+  // Resolves the real group NAME from the in-page store, falling back to getChat.
   const discover = async (groupId, msg) => {
-    if (!groupId || !groupId.endsWith('@g.us') || client._discovered.has(groupId)) return;
-    let name = groupId;
-    try {
-      const chat = await msg.getChat();
-      if (chat && chat.name) name = chat.name;
-    } catch {}
-    client._discovered.set(groupId, name);
+    if (!groupId || !groupId.endsWith('@g.us')) return;
+    const existingName = client._discovered.get(groupId);
+    if (existingName && existingName !== groupId) return; // already have a real name
+
+    let name = await groupNameFromStore(client, groupId);
+    if (!name && msg) {
+      try {
+        const chat = await msg.getChat();
+        if (chat && chat.name) name = chat.name;
+      } catch {}
+    }
+    client._discovered.set(groupId, name || groupId);
     io.to(userId).emit('whatsapp_groups', mergedGroups(client));
   };
 
   // A message the user SENDS in a group makes that group instantly selectable.
+  // This is discovery ONLY — your own messages are never parsed as drives.
   client.on('message_create', (msg) => {
     if (msg.fromMe && msg.to) discover(msg.to, msg);
   });
@@ -261,6 +291,9 @@ function startClientForUser(userId) {
     try {
       // Learn about any group we hear from, so it's selectable even if getChats broke.
       await discover(msg.from, msg);
+
+      // Only parse INCOMING messages from whitelisted groups — never our own.
+      if (msg.fromMe) return;
 
       const user = await User.findById(userId).lean();
       if (!user || !Array.isArray(user.selectedGroups) || !user.selectedGroups.includes(msg.from)) {
