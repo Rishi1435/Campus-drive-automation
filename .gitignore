@@ -22,3 +22,9 @@ npm-debug.log*
 # SQLite data files (local only)
 *.sqlite
 *.sqlite3
+
+# local agent / skill tooling (not app code)
+.agents/
+.claude/
+.codex/
+skills-lock.json
