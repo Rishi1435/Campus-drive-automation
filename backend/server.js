@@ -238,6 +238,11 @@ app.post('/api/groups/:tenantId', (req, res) => {
   );
 });
 
+// Health check (used by Render to confirm the service is up).
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', activeClients: activeClients.size });
+});
+
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {

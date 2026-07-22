@@ -18,3 +18,7 @@ node_modules/
 # logs
 *.log
 npm-debug.log*
+
+# SQLite data files (local only)
+*.sqlite
+*.sqlite3

@@ -1,31 +1,54 @@
-# Render Blueprint — deploy this repo as a free, always-on Docker web service.
+# Render Blueprint — two free services: a Docker backend + a static React frontend.
 # In Render: New -> Blueprint -> connect this repo. Render reads this file and
-# creates the service; you then fill the secret values (marked sync:false) in the
-# dashboard. See DEPLOY.md section 4 for the full walkthrough.
+# creates BOTH services; you then fill the values marked sync:false.
+#
+# NOTE (free tier): the backend runs headless Chromium and stores data in SQLite
+# on an EPHEMERAL disk — on restart/sleep the WhatsApp session + drives reset.
+# Fine for a demo; for persistence you'd add a paid disk or an external DB.
 services:
+  # ---- Backend: WhatsApp worker + API + Socket.io -------------------------
   - type: web
-    name: campus-drive-automation
+    name: campus-drive-backend
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
     autoDeploy: true
-    healthCheckPath: /
     envVars:
-      # Secrets — Render prompts for these; they are NOT stored in the repo.
       - key: NVIDIA_API_KEY
         sync: false
-      - key: APP_SECRET_KEY
-        sync: false
-      - key: MONGODB_URI
-        sync: false
-      - key: GAS_WEBAPP_URL
-        sync: false
-      - key: GAS_TOKEN
-        sync: false
-      - key: WA_ALLOWED_CHATS
-        sync: false
-      # Non-secret defaults.
-      - key: WA_REQUIRE_KEYWORDS
-        value: "true"
       - key: PUPPETEER_EXECUTABLE_PATH
         value: /usr/bin/chromium
+
+  # ---- Frontend: static React (Vite) build --------------------------------
+  - type: web
+    name: campus-drive-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    autoDeploy: true
+    # SPA fallback so client-side routes (/login, /register) work on refresh.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Set this to the backend service's URL after it deploys, e.g.
+      #   https://campus-drive-backend.onrender.com
+      - key: VITE_BACKEND_URL
+        sync: false
+      # Firebase web config (safe to expose; these are public client keys).
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
