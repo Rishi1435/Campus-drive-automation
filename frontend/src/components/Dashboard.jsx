@@ -67,15 +67,18 @@ function Dashboard() {
 
         <div className="stagger flex flex-col gap-6">
           {/* Connection (incl. the group list) and the API key sit side by side on
-              wide screens, so the group list is visible without scrolling. They
-              stack on narrow screens. items-start keeps each panel its own height. */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              medium and wider screens. items-start keeps each panel its own height. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             <ConnectionPanel />
             <ApiKeyPanel />
           </div>
           <DataTable />
         </div>
       </main>
+
+      <footer className="max-w-6xl mx-auto px-5 py-6 text-center text-xs border-t mt-4 mb-4" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
+        Campus Drive Tracker &bull; Real-time placement drive monitoring
+      </footer>
     </div>
   );
 }

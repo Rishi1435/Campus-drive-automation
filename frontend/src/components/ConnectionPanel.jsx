@@ -219,27 +219,42 @@ function ConnectionPanel() {
             </p>
           ) : (
             <div
-              className="max-h-80 overflow-y-auto p-1.5 rounded-[12px]"
+              className="max-h-56 overflow-y-auto p-1.5 rounded-[12px]"
               style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}
             >
               {groups
                 .filter((g) => (g.name || '').toLowerCase().includes(groupSearch.toLowerCase()))
-                .map((group) => (
-                  <label key={group.id} htmlFor={group.id} className="check-row">
-                    <input
-                      type="checkbox"
-                      id={group.id}
-                      checked={selectedGroups.includes(group.id)}
-                      onChange={() => handleToggleGroup(group.id)}
-                    />
-                    <span className="check-box" aria-hidden="true">
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6.5L5 9L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </span>
-                    <span className="text-sm truncate">{group.name}</span>
-                  </label>
-                ))}
+                .sort((a, b) => {
+                  const aSel = selectedGroups.includes(a.id);
+                  const bSel = selectedGroups.includes(b.id);
+                  if (aSel && !bSel) return -1;
+                  if (!aSel && bSel) return 1;
+                  return (a.name || '').localeCompare(b.name || '');
+                })
+                .map((group) => {
+                  const isSelected = selectedGroups.includes(group.id);
+                  return (
+                    <label
+                      key={group.id}
+                      htmlFor={group.id}
+                      className="check-row"
+                      style={isSelected ? { background: 'rgba(99, 102, 241, 0.12)' } : undefined}
+                    >
+                      <input
+                        type="checkbox"
+                        id={group.id}
+                        checked={isSelected}
+                        onChange={() => handleToggleGroup(group.id)}
+                      />
+                      <span className="check-box" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6.5L5 9L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                      <span className="text-sm truncate">{group.name}</span>
+                    </label>
+                  );
+                })}
             </div>
           )}
 
