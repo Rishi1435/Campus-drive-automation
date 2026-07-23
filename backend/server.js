@@ -285,8 +285,15 @@ function startClientForUser(userId) {
     authStrategy: new RemoteAuth({
       clientId: userId,
       store: new MongoStore({ mongoose }),
-      backupSyncIntervalMs: 300000,
+      // Persist the session to Mongo sooner (min allowed is 60s) so a restart in
+      // the first few minutes after linking doesn't lose it and force a re-scan.
+      backupSyncIntervalMs: 60000,
     }),
+    // If WhatsApp reports the web session was taken over (phone re-links, another
+    // tab, a transient conflict), reclaim it instead of dropping to a new QR —
+    // this is the usual cause of "scanned, connecting… then QR shows again".
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 60000,
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -298,6 +305,13 @@ function startClientForUser(userId) {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-first-run',
+        // Trim Chromium's memory footprint — on Render's free 512 MB instance an
+        // OOM kill right after login also shows up as a scan → QR-again loop.
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--mute-audio',
       ],
     },
   };
@@ -328,30 +342,59 @@ function startClientForUser(userId) {
     client._lastQr = qr;
     io.to(userId).emit('whatsapp_qr', qr);
   });
-  client.on('loading_screen', () => io.to(userId).emit('whatsapp_status', 'initializing'));
-  client.on('authenticated', () => io.to(userId).emit('whatsapp_status', 'initializing'));
-  client.on('auth_failure', () =>
-    io.to(userId).emit('whatsapp_error', 'WhatsApp authentication failed — please retry.')
+  client.on('loading_screen', (percent) =>
+    io.to(userId).emit('whatsapp_status', 'initializing')
   );
+  client.on('authenticated', () => {
+    console.log(`WhatsApp authenticated for ${userId} — saving session…`);
+    io.to(userId).emit('whatsapp_status', 'initializing');
+  });
+  // RemoteAuth persisted the session to Mongo — from here a restart won't re-QR.
+  client.on('remote_session_saved', () =>
+    console.log(`WhatsApp session persisted to Mongo for ${userId}.`)
+  );
+  client.on('auth_failure', (m) => {
+    console.error(`WhatsApp auth_failure for ${userId}: ${m}`);
+    io.to(userId).emit('whatsapp_error', 'WhatsApp authentication failed — please retry.');
+  });
 
   client.on('ready', () => {
     client._ready = true;
     client._initializing = false;
     client._lastQr = null;
+    client._reconnects = 0; // healthy connection — reset the backoff counter
+    console.log(`WhatsApp READY for ${userId}.`);
     io.to(userId).emit('whatsapp_status', 'connected');
     loadGroups(client, userId);
   });
 
   client.on('disconnected', (reason) => {
+    console.warn(`WhatsApp disconnected for ${userId}. Reason: ${reason}`);
     client._ready = false;
     activeClients.delete(userId);
     io.to(userId).emit('whatsapp_status', 'disconnected');
     // Auto-reconnect on unexpected drops (keeps WhatsApp "always on"); but NOT
     // when the user explicitly logged out or WhatsApp ended the session.
     if (!client._intentionalLogout && reason !== 'LOGOUT') {
+      // Back off on repeated drops so we don't strobe the user between
+      // "connecting" and a fresh QR; give up after several tries.
+      const attempts = (client._reconnects || 0) + 1;
+      if (attempts > 5) {
+        console.error(`WhatsApp gave up reconnecting for ${userId} after ${attempts} tries.`);
+        io.to(userId).emit('whatsapp_status', 'error');
+        io.to(userId).emit(
+          'whatsapp_error',
+          'WhatsApp keeps dropping right after connecting. Tap Disconnect to clear the session, then re-scan.'
+        );
+        return;
+      }
+      const delay = Math.min(30000, 5000 * attempts);
       setTimeout(() => {
-        if (!activeClients.has(userId)) startClientForUser(userId);
-      }, 10000);
+        if (!activeClients.has(userId)) {
+          const next = startClientForUser(userId);
+          if (next) next._reconnects = attempts;
+        }
+      }, delay);
     }
   });
 
@@ -460,6 +503,8 @@ function startClientForUser(userId) {
     io.to(userId).emit('whatsapp_status', 'error');
     io.to(userId).emit('whatsapp_error', client._error);
   });
+
+  return client;
 }
 
 // --- Socket.io: authenticated via JWT in the handshake ----------------------
@@ -508,6 +553,16 @@ io.on('connection', (socket) => {
       try { await c.logout(); } catch {}
       try { await c.destroy(); } catch {}
       activeClients.delete(userId);
+    }
+    // Purge the persisted RemoteAuth session from Mongo even if no live client
+    // exists (or logout failed) — otherwise a corrupt saved session keeps getting
+    // restored and re-fails, trapping the user in a scan → QR-again loop.
+    try {
+      const store = new MongoStore({ mongoose });
+      const session = `RemoteAuth-${userId}`;
+      if (await store.sessionExists({ session })) await store.delete({ session });
+    } catch (e) {
+      console.error('Failed to purge stored WhatsApp session:', e.message);
     }
     io.to(userId).emit('whatsapp_status', 'disconnected');
   });
