@@ -23,6 +23,7 @@ const driveSchema = new mongoose.Schema(
     deadline: String,
     applyLink: String,
     dedupKey: String,
+    applied: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

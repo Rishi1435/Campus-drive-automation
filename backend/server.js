@@ -97,8 +97,21 @@ app.get('/api/drives', requireAuth, async (req, res) => {
       eligibility: d.eligibility,
       deadline: d.deadline,
       applyLink: d.applyLink,
+      applied: !!d.applied,
     }))
   );
+});
+
+// Toggle whether the user has applied to a drive.
+app.patch('/api/drives/:id/applied', requireAuth, async (req, res) => {
+  const applied = !!req.body.applied;
+  const drive = await Drive.findOneAndUpdate(
+    { _id: req.params.id, userId: req.userId },
+    { applied },
+    { new: true }
+  );
+  if (!drive) return res.status(404).json({ error: 'Drive not found' });
+  res.json({ success: true, applied });
 });
 
 app.get('/api/me', requireAuth, async (req, res) => {
@@ -177,8 +190,18 @@ async function groupNameFromStore(client, groupId) {
   try {
     return await client.pupPage.evaluate((id) => {
       try {
-        const c = window.Store && window.Store.Chat && window.Store.Chat.get ? window.Store.Chat.get(id) : null;
-        return c ? c.formattedTitle || c.name || c.subject || null : null;
+        const S = window.Store || {};
+        const chat = S.Chat && S.Chat.get ? S.Chat.get(id) : null;
+        if (chat) {
+          const n = chat.formattedTitle || chat.name || chat.subject;
+          if (n) return n;
+          if (chat.groupMetadata && chat.groupMetadata.subject) return chat.groupMetadata.subject;
+        }
+        const gm = S.GroupMetadata && S.GroupMetadata.get ? S.GroupMetadata.get(id) : null;
+        if (gm && gm.subject) return gm.subject;
+        const contact = S.Contact && S.Contact.get ? S.Contact.get(id) : null;
+        if (contact) return contact.name || contact.formattedName || contact.pushname || null;
+        return null;
       } catch (e) {
         return null;
       }
@@ -276,10 +299,17 @@ function startClientForUser(userId) {
     loadGroups(client, userId);
   });
 
-  client.on('disconnected', () => {
+  client.on('disconnected', (reason) => {
     client._ready = false;
     activeClients.delete(userId);
     io.to(userId).emit('whatsapp_status', 'disconnected');
+    // Auto-reconnect on unexpected drops (keeps WhatsApp "always on"); but NOT
+    // when the user explicitly logged out or WhatsApp ended the session.
+    if (!client._intentionalLogout && reason !== 'LOGOUT') {
+      setTimeout(() => {
+        if (!activeClients.has(userId)) startClientForUser(userId);
+      }, 10000);
+    }
   });
 
   // Add a group to the selectable list (fallback for when getChats is broken).
@@ -319,6 +349,14 @@ function startClientForUser(userId) {
         return;
       }
 
+      // Only capture placement/internship-related messages. Text must mention a
+      // relevant keyword; image messages (flyers) pass through to the vision model.
+      const isPlacement =
+        /placement|intern|hiring|recruit|\bctc\b|stipend|\bdrive\b|\bjob\b|opening|off.?campus|on.?campus|walk.?in|eligibil|\bapply\b|opportunit|vacanc|\blpa\b|\bhr\b|hiring|shortlist/i.test(
+          msg.body || ''
+        );
+      if (!msg.hasMedia && !isPlacement) return;
+
       let base64Image = null;
       if (msg.hasMedia) {
         try {
@@ -354,6 +392,7 @@ function startClientForUser(userId) {
           eligibility: drive.eligibility,
           deadline: drive.deadline,
           applyLink: drive.applyLink,
+          applied: false,
         });
       } catch (e) {
         if (e.code === 11000) {
@@ -422,6 +461,7 @@ io.on('connection', (socket) => {
   socket.on('logout_whatsapp', async () => {
     const c = activeClients.get(userId);
     if (c) {
+      c._intentionalLogout = true; // prevent the auto-reconnect below
       try { await c.logout(); } catch {}
       try { await c.destroy(); } catch {}
       activeClients.delete(userId);
@@ -455,11 +495,30 @@ function startKeepAlive() {
   console.log('Keep-alive ping enabled for', url);
 }
 
+// On boot, resume WhatsApp for users who have configured groups, so capture
+// continues even when no dashboard is open (their stored session auto-restores).
+async function resumeSessions() {
+  try {
+    const users = await User.find({ selectedGroups: { $exists: true, $ne: [] } })
+      .select('_id')
+      .lean();
+    if (!users.length) return;
+    console.log(`Resuming WhatsApp for ${users.length} user(s)…`);
+    for (const u of users) {
+      if (!activeClients.has(u._id.toString())) startClientForUser(u._id.toString());
+      await new Promise((r) => setTimeout(r, 8000)); // stagger to spread RAM/CPU
+    }
+  } catch (e) {
+    console.error('resumeSessions error:', e.message);
+  }
+}
+
 // --- Boot -------------------------------------------------------------------
 connectMongo(process.env.MONGODB_URI)
   .then(() => {
     server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
     startKeepAlive();
+    resumeSessions();
   })
   .catch((e) => {
     console.error('Failed to connect to MongoDB:', e.message);

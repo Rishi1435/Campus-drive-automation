@@ -232,6 +232,16 @@ a { color: inherit; }
 .check-row input:checked + .check-box svg { opacity: 1; transform: scale(1); }
 .check-row input:focus-visible + .check-box { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Standalone applied checkbox (table cell) */
+.applied-check { display: inline-flex; cursor: pointer; }
+.applied-check input { position: absolute; opacity: 0; pointer-events: none; }
+.applied-check input:checked + .check-box {
+  background: linear-gradient(135deg, var(--success), #10b981);
+  border-color: transparent;
+}
+.applied-check input:checked + .check-box svg { opacity: 1; transform: scale(1); }
+.applied-check input:focus-visible + .check-box { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Data table -------------------------------------------------------------- */
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
 .data-table th {

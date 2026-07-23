@@ -31,6 +31,17 @@ function DataTable() {
     return () => socket.off('new_drive', handleNewDrive);
   }, [socket]);
 
+  const toggleApplied = async (id, applied) => {
+    // optimistic update
+    setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, applied } : d)));
+    try {
+      await apiFetch(`/api/drives/${id}/applied`, { token, method: 'PATCH', body: { applied } });
+    } catch (err) {
+      console.error('Failed to update applied:', err);
+      setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, applied: !applied } : d))); // revert
+    }
+  };
+
   const handleExport = () => {
     const ws = XLSX.utils.json_to_sheet(
       drives.map((d) => ({
@@ -40,6 +51,7 @@ function DataTable() {
         Eligibility: d.eligibility || '-',
         Deadline: d.deadline || '-',
         Link: d.applyLink || '-',
+        Applied: d.applied ? 'Yes' : 'No',
       }))
     );
     const wb = XLSX.utils.book_new();
@@ -88,6 +100,7 @@ function DataTable() {
                 <th>Eligibility</th>
                 <th>Deadline</th>
                 <th>Apply</th>
+                <th style={{ textAlign: 'center' }}>Applied</th>
               </tr>
             </thead>
             <tbody>
@@ -109,6 +122,20 @@ function DataTable() {
                     ) : (
                       <span style={{ color: 'var(--text-faint)' }}>—</span>
                     )}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <label className="applied-check" title={drive.applied ? 'Applied' : 'Mark as applied'}>
+                      <input
+                        type="checkbox"
+                        checked={!!drive.applied}
+                        onChange={(e) => toggleApplied(drive.id, e.target.checked)}
+                      />
+                      <span className="check-box" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6.5L5 9L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    </label>
                   </td>
                 </tr>
               ))}
