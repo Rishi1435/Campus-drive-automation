@@ -2,10 +2,10 @@
 # In Render: New -> Blueprint -> connect this repo. Render reads this file and
 # creates BOTH services; you then fill the values marked sync:false.
 #
-# NOTE (free tier): drives/users live in MongoDB (persistent), but the WhatsApp
-# session is on the instance's EPHEMERAL disk and free services SLEEP after ~15
-# min idle — so the WhatsApp link drops and needs a re-scan after a sleep/restart.
-# Fine to try; for always-on capture use a paid instance or your own machine.
+# NOTE: The backend uses Baileys (WhatsApp over WebSocket — NO browser), so it's
+# lightweight and BOTH the data AND the WhatsApp session live in MongoDB. The
+# login therefore survives restarts/redeploys without a re-scan. Free services
+# still sleep after ~15 min idle, but the built-in keep-alive ping keeps it awake.
 services:
   # ---- Backend: WhatsApp worker + API + Socket.io -------------------------
   - type: web
@@ -29,8 +29,6 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/chromium
 
   # ---- Frontend: static React (Vite) build --------------------------------
   - type: web

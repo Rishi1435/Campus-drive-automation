@@ -1,20 +1,13 @@
-# Backend: Express + Socket.io + SQLite + whatsapp-web.js (headless Chromium).
+# Backend: Express + Socket.io + Baileys (WhatsApp over WebSocket — NO browser).
+# No Chromium, so the image is small and the process fits a free 512 MB instance.
 FROM node:22-bookworm-slim
 
-# Chromium for Puppeteer + build tools for the native sqlite3 module.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     ca-certificates \
-    fonts-liberation \
     dumb-init \
-    python3 \
-    make \
-    g++ \
   && rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    NODE_ENV=production
+ENV NODE_ENV=production
 
 WORKDIR /app
 
@@ -23,11 +16,9 @@ RUN npm install --omit=dev
 
 COPY . .
 
-# Non-root user; session data persists only while the instance lives (Render free
-# tier has an ephemeral disk — see DEPLOY notes).
-RUN useradd -m appuser \
-  && mkdir -p /app/.wwebjs_auth /app/.wwebjs_cache \
-  && chown -R appuser:appuser /app
+# Non-root user. The WhatsApp session lives in MongoDB (not on disk), so it
+# survives restarts even though Render's free disk is ephemeral.
+RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
 ENTRYPOINT ["dumb-init", "--"]
