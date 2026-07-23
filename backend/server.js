@@ -5,9 +5,12 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { Client, RemoteAuth } = require('whatsapp-web.js');
 const { MongoStore } = require('wwebjs-mongo');
 const { parseDriveData } = require('./parser');
+const { encrypt, decrypt } = require('./secretbox');
 const { mongoose, connectMongo, User, Drive } = require('./mongo');
 require('dotenv').config();
 
@@ -18,13 +21,41 @@ process.on('uncaughtException', (e) => console.error('Uncaught exception:', (e &
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const PORT = process.env.PORT || 3000;
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Refuse to run in production with a weak/default signing secret.
+if (IS_PROD && (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-secret-change-me')) {
+  console.error('FATAL: set a strong JWT_SECRET in production.');
+  process.exit(1);
+}
+
+// Lock CORS to your frontend origin(s) if provided, otherwise allow all (dev).
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const corsOrigin = allowedOrigins.length ? allowedOrigins : '*';
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+const io = new Server(server, { cors: { origin: corsOrigin, methods: ['GET', 'POST'] } });
 
-app.use(cors());
-app.use(express.json());
+app.set('trust proxy', 1); // behind Render's proxy — needed for correct client IPs
+// Security headers. It's a JSON API consumed cross-origin by the frontend, so no
+// CSP and an explicit cross-origin resource policy.
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(cors({ origin: corsOrigin }));
+app.use(express.json({ limit: '1mb' }));
+
+// Throttle auth endpoints to blunt brute-force / credential-stuffing.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please wait a few minutes and try again.' },
+});
+app.use('/api/auth', authLimiter);
 
 // --- Auth helpers -----------------------------------------------------------
 function signToken(user) {
@@ -104,14 +135,21 @@ app.get('/api/drives', requireAuth, async (req, res) => {
 
 // Toggle whether the user has applied to a drive.
 app.patch('/api/drives/:id/applied', requireAuth, async (req, res) => {
-  const applied = !!req.body.applied;
-  const drive = await Drive.findOneAndUpdate(
-    { _id: req.params.id, userId: req.userId },
-    { applied },
-    { new: true }
-  );
-  if (!drive) return res.status(404).json({ error: 'Drive not found' });
-  res.json({ success: true, applied });
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const applied = !!req.body.applied;
+    const drive = await Drive.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId }, // scoped to the owner
+      { applied },
+      { new: true }
+    );
+    if (!drive) return res.status(404).json({ error: 'Drive not found' });
+    res.json({ success: true, applied });
+  } catch (e) {
+    res.status(500).json({ error: 'Update failed' });
+  }
 });
 
 app.get('/api/me', requireAuth, async (req, res) => {
@@ -124,11 +162,16 @@ app.get('/api/me', requireAuth, async (req, res) => {
   });
 });
 
-// Save (or clear) the user's own NVIDIA API key.
+// Save (or clear) the user's own NVIDIA API key. Stored ENCRYPTED at rest and
+// never sent back to any client (only a hasApiKey flag).
 app.post('/api/apikey', requireAuth, async (req, res) => {
-  const key = typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
-  await User.findByIdAndUpdate(req.userId, { nvidiaApiKey: key });
-  res.json({ success: true, hasApiKey: !!key });
+  try {
+    const raw = typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    await User.findByIdAndUpdate(req.userId, { nvidiaApiKey: raw ? encrypt(raw) : '' });
+    res.json({ success: true, hasApiKey: !!raw });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not save key.' });
+  }
 });
 
 app.post('/api/groups', requireAuth, async (req, res) => {
@@ -369,7 +412,7 @@ function startClientForUser(userId) {
         }
       }
 
-      const parsed = await parseDriveData(msg.body, base64Image, user.nvidiaApiKey);
+      const parsed = await parseDriveData(msg.body, base64Image, decrypt(user.nvidiaApiKey));
       if (!parsed || (!parsed.company && !parsed.role)) return;
 
       const dedupKey = dedupKeyFor(parsed);

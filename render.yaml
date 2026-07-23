@@ -23,6 +23,12 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      # Lock CORS + Socket.io to your frontend origin (exact, no trailing slash),
+      # e.g. https://campus-drive-frontend.onrender.com
+      - key: FRONTEND_URL
+        sync: false
+      - key: NODE_ENV
+        value: production
       - key: PUPPETEER_EXECUTABLE_PATH
         value: /usr/bin/chromium
 
