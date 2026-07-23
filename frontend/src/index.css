@@ -44,10 +44,14 @@
 
 * { box-sizing: border-box; }
 
-html, body, #root { min-height: 100%; }
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+}
 
 body {
-  margin: 0;
   color: var(--text);
   background: var(--bg);
   /* Layered aurora glows — subtle, static (no vestibular motion). */
@@ -59,7 +63,7 @@ body {
 }
 
 /* Reset the leftover Vite-template layout so the app can lay out full-width. */
-#root { width: 100%; margin: 0; text-align: left; border: 0; }
+#root { width: 100%; margin: 0; padding: 0; text-align: left; border: 0; }
 
 ::selection { background: var(--accent-glow); color: #fff; }
 
