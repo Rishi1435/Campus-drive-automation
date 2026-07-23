@@ -41,7 +41,13 @@ const io = new Server(server, { cors: { origin: corsOrigin, methods: ['GET', 'PO
 
 // WhatsApp engine (Baileys — no browser). Handles one socket per user, emits the
 // whatsapp_* socket.io events the frontend listens for, and captures drives.
-const wa = createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, dedupKeyFor });
+// MAX_WHATSAPP_USERS caps how many people can be linked at once (protects the free
+// instance). Default 5; set 0 to disable the cap.
+const MAX_WHATSAPP_USERS = process.env.MAX_WHATSAPP_USERS ? parseInt(process.env.MAX_WHATSAPP_USERS, 10) : 5;
+const wa = createWhatsApp({
+  io, mongoose, User, Drive, parseDriveData, decrypt, dedupKeyFor,
+  maxUsers: MAX_WHATSAPP_USERS,
+});
 
 app.set('trust proxy', 1); // behind Render's proxy — needed for correct client IPs
 // Security headers. It's a JSON API consumed cross-origin by the frontend, so no
@@ -186,8 +192,10 @@ app.post('/api/groups', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// Health + tiny admin view: how many WhatsApp links are live right now.
+// e.g. { status:'ok', whatsapp:{ connected:2, connecting:0, failed:0, total:2, capacity:5 } }
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', activeClients: wa.count() });
+  res.json({ status: 'ok', whatsapp: wa.stats() });
 });
 
 // --- Socket.io: authenticated via JWT in the handshake ----------------------

@@ -29,6 +29,10 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+      # Max people who can be linked to WhatsApp at once (protects the free
+      # instance). Default 5 if unset; set 0 to disable the cap.
+      - key: MAX_WHATSAPP_USERS
+        value: "5"
 
   # ---- Frontend: static React (Vite) build --------------------------------
   - type: web

@@ -54,7 +54,7 @@ function extractText(content) {
   );
 }
 
-function createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, dedupKeyFor }) {
+function createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, dedupKeyFor, maxUsers = 5 }) {
   const clients = new Map(); // userId -> state object
 
   // --- MongoDB-backed Baileys auth state -----------------------------------
@@ -215,6 +215,19 @@ function createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, de
   async function start(userId, reconnects = 0) {
     const existing = clients.get(userId);
     if (existing && (existing.starting || existing.ready)) return existing;
+
+    // Capacity guard: cap the number of DISTINCT live WhatsApp links so a small
+    // free instance can't be overwhelmed. Existing users (reconnects) never count
+    // against it — only a brand-new user beyond the limit is turned away.
+    if (!existing && maxUsers > 0 && clients.size >= maxUsers) {
+      console.warn(`Capacity reached (${clients.size}/${maxUsers}) — refusing new WhatsApp link for ${userId}.`);
+      io.to(userId).emit('whatsapp_status', 'error');
+      io.to(userId).emit(
+        'whatsapp_error',
+        `Server is at capacity (${maxUsers} people linked). Please try again later.`
+      );
+      return null;
+    }
 
     const st = {
       starting: true,
@@ -409,6 +422,19 @@ function createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, de
     return clients.size;
   }
 
+  // A tiny snapshot of live WhatsApp links for the health/admin endpoint.
+  function stats() {
+    let connected = 0;
+    let connecting = 0;
+    let failed = 0;
+    for (const st of clients.values()) {
+      if (st.ready) connected++;
+      else if (st.failed) failed++;
+      else connecting++;
+    }
+    return { connected, connecting, failed, total: clients.size, capacity: maxUsers };
+  }
+
   // On boot, reconnect users who have configured groups so capture continues
   // even with no dashboard open. Their stored session restores silently.
   async function resumeSessions() {
@@ -443,6 +469,7 @@ function createWhatsApp({ io, mongoose, User, Drive, parseDriveData, decrypt, de
     getState,
     emitGroupsTo,
     count,
+    stats,
   };
 }
 
