@@ -66,8 +66,13 @@ function Dashboard() {
         </div>
 
         <div className="stagger flex flex-col gap-6">
-          <ConnectionPanel />
-          <ApiKeyPanel />
+          {/* Connection (incl. the group list) and the API key sit side by side on
+              wide screens, so the group list is visible without scrolling. They
+              stack on narrow screens. items-start keeps each panel its own height. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <ConnectionPanel />
+            <ApiKeyPanel />
+          </div>
           <DataTable />
         </div>
       </main>

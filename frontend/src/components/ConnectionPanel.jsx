@@ -219,7 +219,7 @@ function ConnectionPanel() {
             </p>
           ) : (
             <div
-              className="max-h-64 overflow-y-auto p-1.5 rounded-[12px]"
+              className="max-h-80 overflow-y-auto p-1.5 rounded-[12px]"
               style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}
             >
               {groups

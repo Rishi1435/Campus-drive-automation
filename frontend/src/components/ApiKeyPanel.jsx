@@ -54,21 +54,23 @@ function ApiKeyPanel() {
         → pick a model → “Get API Key”, then paste it below.
       </p>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <input
-          type="password"
-          className="input"
-          style={{ maxWidth: '380px' }}
-          placeholder={hasKey ? 'Enter a new key to replace the saved one' : 'nvapi-...'}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-        />
-        <a href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer" className="btn">
-          Get API key
-        </a>
+      {/* Input on its own row, actions below — keeps this readable in the
+          half-width column without the controls wrapping awkwardly. */}
+      <input
+        type="password"
+        className="input"
+        placeholder={hasKey ? 'Enter a new key to replace the saved one' : 'nvapi-...'}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
+
+      <div className="flex items-center gap-2 flex-wrap mt-3">
         <button className="btn btn--primary" onClick={() => save(false)} disabled={state === 'saving' || !value.trim()}>
           {state === 'saving' ? <span className="spinner" /> : 'Save key'}
         </button>
+        <a href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer" className="btn">
+          Get API key
+        </a>
         {hasKey && (
           <button className="btn btn--danger" onClick={() => save(true)} disabled={state === 'saving'}>
             Remove
