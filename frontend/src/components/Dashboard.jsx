@@ -28,7 +28,7 @@ function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div>
       {/* Translucent sticky header — content scrolls underneath it. */}
       <header
         className="sticky top-0 z-20"
@@ -55,8 +55,8 @@ function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-5 py-8">
-        <div className="mb-8 animate-in">
+      <main className="max-w-6xl mx-auto px-5 pt-6 pb-8">
+        <div className="mb-6 animate-in">
           <h1 className="text-3xl sm:text-4xl" style={{ letterSpacing: '-0.03em' }}>
             Your placement drives
           </h1>

@@ -75,7 +75,7 @@ function DataTable() {
       </div>
 
       {drives.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-center px-6 py-10 animate-in">
+        <div className="flex flex-col items-center justify-center text-center px-6 py-8 animate-in">
           <div
             className="w-14 h-14 rounded-2xl grid place-items-center mb-4"
             style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}
